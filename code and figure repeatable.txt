@@ -1,0 +1,91 @@
+code and figure repeatable
+
+code available
+#Shotgun metagenomic sequencing data assembling
+Software: megahit
+Parameter:
+megahit -1 C_1.fq -2 C_2.fq -m 100000000000 -t 12 -o C1.contig --min-contig-len 500
+
+#For metagenomic data taxonomy annotation
+Software: Kraken Bracken
+Parameter:
+kraken2-build --db ${KRAKEN_DB} --threads ${THREADS}
+bracken-build -d ${KRAKEN_DB} -t ${THREADS} -k ${KMER_LEN} -l 150
+kraken2 --db ${KRAKEN_DB} --threads ${THREADS} --report C1.kreport C1.fq > C1.kraken
+bracken -d ${KRAKEN_DB} -i $C1.kreport -o C1.bracken -r 150 -t ${THRESHOLD}
+
+#For metagenomic data functional annotation
+Software: HUMAnN2
+Parameter:
+humann2 --threads 12 --input C1.fasta --output $OUTPUT_DIR
+
+#For CAZymes annotation
+python run_dbcan-master/run_dbcan C1.fa meta --db_dir run_dbcan-master/db --tools diamond --dia_cpu 24 -o C1_cazy
+gmhmmp -a -d -f G -m MetaGeneMark_v1.mod C1.fa -o C1.gff
+perl MetaGeneMark_linux64/nt_from_gff.pl C1.gff > C1.nt.fasta
+cat *.nt.fa > all_gene_DNA.fa
+cd-hit-est -i all_gene_DNA.fa -o all_clean.nt.fa -c 0.95 -n 10 -M 100000 -aS 0.9 -T 8 -B 1
+bowtie2-build all_clean.nt.fa allnt.index
+bowtie2 -p 16 -x  allnt.index -U C1.fa -S c1.sam
+samtools view -bS C1.sam -o C1.bam
+samtools sort -m 10000000000 xx.bam -o C1.out.bam
+samtools index C1.out.bam
+samtools idxstats c1.out.bam | tee -a C1.txt
+
+# For SNP calling
+Software: bowtie2, bcftools
+Parameter:
+bowtie2 -p 12 -x /lp082_ref/lp --no-mixed --very-sensitive --n-ceil 0,0.01 -1 C1_1.fq -2 C1_2.fq | samtools sort -O bam -@ 24 -o - > C1ref.bam
+bcftools mpileup -C 50 -Ou -m 3 -F 0.0002 -f lp082_ref/ref.fasta C1ref.bam > C1ref.bcf
+bcftools call -c --variants-only -Ob --ploidy 1 C1ref.bcf > C1.bcf
+bcftools view -Ov C1.bcf | vcfutils.pl varFilter -d 100 > C1.vcf
+# Merge all single *.vcf to the SNP profile:
+callsnp/tabix-0.2.6/bgzip C1.vcf
+bcftools index C1.vcf.gz
+bcftools merge --merge all -l listvcf -O v > snp.vcf
+
+#For intestinal microbiota evolution analysis
+Software: MDIS
+Parameter:
+run_midas.py snps /path/to/outdir --species_id Bacteroides_thetaiotaomicron_56941 -1 C1_1.fq -2 C1_2.fq
+
+#figures repeatable
+#For CLR Tranform
+library(compositions)
+all <- read.table("123.txt",header=T,row.names=1,sep="\t")
+abc <- clr(all)
+write.table(abc,"clr.txt",sep="\t")
+
+# For heatmap
+library(pheatmap)
+all<-read.table("123.txt",header=TRUE,sep="\t",row.names=1)
+pheatmap(all,,cellwidth=6,cluster_col = FALSE,cluster_row = FALSE,cellheight=6,fontsize_row=6,fontsize_col=6,color = colorRampPalette(c("xx", "xx", "xx"))(10), filename="snp.pdf")
+
+#For Bray-Curtis distance
+all <- read.table("123.txt",header=T,row.names=1,sep="\t")
+library(vegan)
+a <- vegdist(all, method="bray")
+aa <- as.matrix(a)
+write.table(aa,"bray_distance.txt",sep="\t")
+
+#For PCoA
+library(ggplot2)
+aaa <- read.table("123.txt",header = T,row.names = 1,sep="\t")
+ggplot(data=aaa,aes(x=PC1,y=PC2,colour=group))+geom_point(size=4)+theme_bw()
+
+#For Kruskal-Wallis test
+all <- read.table("123.txt",header=T,row.names=1,sep="\t")
+g<-factor(rep(1:3,c(x,y,z)),labels=c("GPP","GPC","PRO"))
+result<-data.frame(as.character(rownames(all)))
+for (i in 1:nrow(all)){
+  result[i,2] <- kruskal.test(as.numeric(all[i,]), g)$p.value
+}
+write.table(result,"p_value.txt",sep="\t",row.names=F,col.names=F)
+
+#For bubble chart
+library(ggplot2)
+all <- read.table("123.txt",header=T,row.names=1,sep="\t")
+pathway = read.table("123.txt",header=TRUE,row.names=1,check.names = FALSE)  
+p = ggplot(pathway,aes(value,pathway))
+p=p + geom_point() 
+ggplot(pathway,aes(value,pathway))+geom_point(aes(colour=factor1,size=factor2))
